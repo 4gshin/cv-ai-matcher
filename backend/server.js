@@ -4,6 +4,7 @@ const cors = require('cors');
 const multer = require('multer');
 const PDFParser = require('pdf2json');
 const path = require('path'); 
+const { OpenAI } = require('openai'); // Stable OpenAI SDK
 require('dotenv').config();
 
 const app = express();
@@ -16,6 +17,7 @@ app.use(cors({
 
 app.use(express.json());
 
+// Serve frontend static files dynamically
 app.use(express.static(path.join(__dirname, '../frontend')));
 
 app.get('/', (req, res) => {
@@ -23,6 +25,11 @@ app.get('/', (req, res) => {
 });
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Initialize OpenAI safely
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => {
   try {
@@ -35,6 +42,7 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
 
     console.log(`=== [2] Parsing PDF: ${req.file.originalname} ===`);
     
+    // Parse PDF to text using pdf2json
     const pdfParser = new PDFParser(null, 1);
     const resumeText = await new Promise((resolve, reject) => {
       pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
@@ -49,7 +57,7 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
     }
 
     console.log("=== [3] PDF Parsed. Length:", resumeText.length);
-    console.log("=== [4] Sending to Gemini via Clean REST API (No SDK)... ===");
+    console.log("=== [4] Sending to OpenAI (GPT-4o-mini)... ===");
 
     const prompt = `
       You are an expert technical HR manager. Analyze the following resume text carefully.
@@ -57,9 +65,7 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
       Resume Text:
       "${resumeText}"
       
-      Return ONLY a valid JSON object. Do NOT include any markdown formatting, do NOT include \`\`\`json or \`\`\` brackets. Return pure JSON string.
-      
-      Expected JSON structure:
+      Provide a rigorous evaluation. Return ONLY a valid JSON object matching this exact structure:
       {
         "fullName": "Candidate's full name",
         "email": "Candidate's email or null",
@@ -73,33 +79,18 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
       }
     `;
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    
-    // Direct, hardcoded stable v1 endpoint. No SDK layers to hijack our version!
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-    const googleResponse = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }] // Clean payload, no buggy config objects
-      })
+    // Strict OpenAI JSON Mode call
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      response_format: { type: 'json_object' } // Guarantees pure JSON without markdown code blocks
     });
 
-    if (!googleResponse.ok) {
-      const errText = await googleResponse.text();
-      throw new Error(`Google API Error: ${googleResponse.status} - ${errText}`);
-    }
-
-    const googleData = await googleResponse.json();
-    console.log("=== [5] Gemini API Responded Successfully ===");
-
-    let resultText = googleData.candidates[0].content.parts[0].text;
-    resultText = resultText.replace(/```json|```/g, "").trim();
-
+    console.log("=== [5] OpenAI API Responded Successfully ===");
+    
+    const resultText = completion.choices[0].message.content.trim();
     const analysisResult = JSON.parse(resultText);
+    
     return res.status(200).json({ success: true, data: analysisResult });
 
   } catch (error) {
