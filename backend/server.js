@@ -2,44 +2,64 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const pdfParse = require('pdf-parse');
-const { GoogleGenAI } = require('@google/generative-ai');
+const PDFParser = require('pdf2json');
+const path = require('path'); 
 require('dotenv').config();
 
 const app = express();
-app.use(cors());
+
+app.use(cors({
+  origin: '*', 
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type']
+}));
+
 app.use(express.json());
 
-// Configure Multer for file uploads (saving in memory)
-const upload = multer({ storage: multer.memoryStorage() });
+app.use(express.static(path.join(__dirname, '../frontend')));
 
-// Initialize Gemini API
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
+});
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => {
   try {
+    console.log("=== [1] New Request Received ===");
+    
     if (!req.file) {
+      console.log("!!! File missing in request !!!");
       return res.status(400).json({ success: false, error: 'No file uploaded.' });
     }
 
-    // 1. Extract text from the uploaded PDF
-    const pdfData = await pdfParse(req.file.buffer);
-    const resumeText = pdfData.text;
-
-    // 2. Initialize the Gemini model (using gemini-1.5-flash for speed and reliability)
-    const model = ai.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
-      generationConfig: { responseMimeType: 'application/json' } // Forces JSON output
+    console.log(`=== [2] Parsing PDF: ${req.file.originalname} ===`);
+    
+    const pdfParser = new PDFParser(null, 1);
+    const resumeText = await new Promise((resolve, reject) => {
+      pdfParser.on("pdfParser_dataError", errData => reject(errData.parserError));
+      pdfParser.on("pdfParser_dataReady", pdfData => {
+        resolve(pdfParser.getRawTextContent());
+      });
+      pdfParser.parseBuffer(req.file.buffer);
     });
 
-    // 3. Construct the English prompt for structured analysis
+    if (!resumeText || resumeText.trim().length === 0) {
+      return res.status(400).json({ success: false, error: 'Could not read any text from the PDF.' });
+    }
+
+    console.log("=== [3] PDF Parsed. Length:", resumeText.length);
+    console.log("=== [4] Sending to Gemini via Clean REST API (No SDK)... ===");
+
     const prompt = `
       You are an expert technical HR manager. Analyze the following resume text carefully.
       
       Resume Text:
       "${resumeText}"
       
-      Provide a rigorous evaluation. Return ONLY a JSON object with the following exact keys:
+      Return ONLY a valid JSON object. Do NOT include any markdown formatting, do NOT include \`\`\`json or \`\`\` brackets. Return pure JSON string.
+      
+      Expected JSON structure:
       {
         "fullName": "Candidate's full name",
         "email": "Candidate's email or null",
@@ -53,19 +73,43 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
       }
     `;
 
-    // 4. Call AI API
-    const response = await model.generateContent(prompt);
-    const resultText = response.response.text();
+    const apiKey = process.env.GEMINI_API_KEY;
     
-    // 5. Parse and send the structured JSON back to frontend
+    // Direct, hardcoded stable v1 endpoint. No SDK layers to hijack our version!
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+    const googleResponse = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }] // Clean payload, no buggy config objects
+      })
+    });
+
+    if (!googleResponse.ok) {
+      const errText = await googleResponse.text();
+      throw new Error(`Google API Error: ${googleResponse.status} - ${errText}`);
+    }
+
+    const googleData = await googleResponse.json();
+    console.log("=== [5] Gemini API Responded Successfully ===");
+
+    let resultText = googleData.candidates[0].content.parts[0].text;
+    resultText = resultText.replace(/```json|```/g, "").trim();
+
     const analysisResult = JSON.parse(resultText);
     return res.status(200).json({ success: true, data: analysisResult });
 
   } catch (error) {
-    console.error('Server Error:', error);
+    console.log("\n❌ ================= CRITICAL BACKEND ERROR ================= ❌");
+    console.error(error.message);
+    console.log("❌ ========================================================= ❌\n");
+    
     return res.status(500).json({ success: false, error: error.message });
   }
 });
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const PORT = 4000;
+app.listen(PORT, () => console.log(`🚀 Server actually running on port ${PORT}`));
