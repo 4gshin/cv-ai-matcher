@@ -80,7 +80,6 @@
             document.getElementById('result').classList.add('hidden');
 
             try {
-                // Sərt şəkildə təmiz 4000 portuna yönləndirdik
                 const response = await fetch('http://127.0.0.1:4000/api/v1/analyze-resume', {
                     method: 'POST',
                     body: formData
