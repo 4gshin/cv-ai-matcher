@@ -72,25 +72,35 @@ app.post('/api/v1/analyze-resume', upload.single('resume'), async (req, res) => 
     const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const prompt = `
-      You are an expert technical HR manager. Analyze the following resume text carefully.
+      You are an elite Technical Recruiter and Career Architect. Analyze the following resume text deeply and critically.
       
       Resume Text:
       "${resumeText}"
+      
+      Provide a highly professional evaluation. Follow these strict guidelines for the JSON keys:
+      1. fullName & email: Extract accurately.
+      2. summary: Write a powerful, 2-sentence executive value proposition tailored to their target roles. Do not use generic filler words.
+      3. technicalSkills: Extract specific frameworks, databases, tools, and methodologies.
+      4. softSkills: Extract or infer strong behavioral traits based on projects/roles.
+      5. experienceYears: Calculate strictly based on dates.
+      6. strengths: Provide 3 hyper-specific engineering strengths with context (e.g., instead of "Good at React", use "Solid understanding of component architecture and modern state management").
+      7. improvements: Provide 3 strategic, actionable engineering feedback points. Do not just list what is missing; explicitly state "what to add next" to level up (e.g., specific architectures, DevOps tools, or database paradigms).
+      8. matchedRoles: Provide 3 precise tech-industry job titles.
       
       Return ONLY a valid JSON object matching this exact structure, with no markdown styling:
       {
         "fullName": "Candidate's full name",
         "email": "Candidate's email or null",
-        "summary": "A concise 2-sentence professional summary",
-        "technicalSkills": ["Array of core technical skills found"],
-        "softSkills": ["Array of soft skills found"],
+        "summary": "Professional executive summary",
+        "technicalSkills": ["Skills"],
+        "softSkills": ["Skills"],
         "experienceYears": 0, 
-        "strengths": ["Top 3 professional strengths"],
-        "improvements": ["Areas where the candidate needs to improve or missing critical stack elements"],
-        "matchedRoles": ["Top 3 job titles suited for this profile"]
+        "strengths": ["Actionable strength 1", "Actionable strength 2", "Actionable strength 3"],
+        "improvements": ["Strategic upgrade path 1", "Strategic upgrade path 2", "Strategic upgrade path 3"],
+        "matchedRoles": ["Role 1", "Role 2", "Role 3"]
       }
     `;
-
+    
     const response = await generateContentWithRetry(model, prompt);
     console.log("=== [5] Gemini API Responded Successfully ===");
 
